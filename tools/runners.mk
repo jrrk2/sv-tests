@@ -54,6 +54,23 @@ $(INSTALL_DIR)/bin/verilator:
 	$(MAKE) -C $(RDIR)/verilator
 	$(MAKE) -C $(RDIR)/verilator install
 
+# verilator-synth (jrrk2/verilator "synthesis" branch: structural/BIR/abc-mapped
+# netlist backends). Installed into its own prefix so it does not clash with
+# the stock verilator; a wrapper named verilator-synth goes into bin/.
+VERILATOR_SYNTH_PREFIX := $(INSTALL_DIR)/verilator-synth
+
+verilator-synth: $(INSTALL_DIR)/bin/verilator-synth
+
+$(INSTALL_DIR)/bin/verilator-synth:
+	cd $(RDIR)/verilator-synth && git submodule update --init third_party/abc
+	cd $(RDIR)/verilator-synth && autoconf
+	cd $(RDIR)/verilator-synth && ./configure --prefix=$(VERILATOR_SYNTH_PREFIX)/
+	$(MAKE) -C $(RDIR)/verilator-synth
+	$(MAKE) -C $(RDIR)/verilator-synth install
+	mkdir -p $(INSTALL_DIR)/bin
+	printf '#!/bin/sh\nexec %s/bin/verilator "$$@"\n' $(VERILATOR_SYNTH_PREFIX) > $@
+	chmod +x $@
+
 # slang
 slang: $(INSTALL_DIR)/bin/slang-driver
 
@@ -165,6 +182,6 @@ $(INSTALL_DIR)/bin/circt-verilog:
 	$(MAKE) -C $(RDIR)/circt-verilog/build install-circt-verilog
 
 # setup the dependencies
-RUNNERS_TARGETS := odin yosys icarus verilator slang zachjs-sv2v tree-sitter-systemverilog tree-sitter-verilog sv-parser moore verible surelog yosys-synlig circt-verilog
+RUNNERS_TARGETS := odin yosys icarus verilator verilator-synth slang zachjs-sv2v tree-sitter-systemverilog tree-sitter-verilog sv-parser moore verible surelog yosys-synlig circt-verilog
 .PHONY: $(RUNNERS_TARGETS)
 runners: $(RUNNERS_TARGETS)

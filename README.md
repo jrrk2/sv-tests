@@ -101,6 +101,7 @@ Finally the file containing the test case and metadata should be placed in `test
 * [Yosys](https://github.com/yosysHQ/yosys)
 * [Odin II](https://verilogtorouting.org)
 * [Verilator](https://verilator.org)
+* [Verilator synthesis branch](https://github.com/jrrk2/verilator/tree/synthesis)
 * [Icarus](http://iverilog.icarus.com)
 * [slang](https://github.com/MikePopoloski/slang)
 * [sv2v(zachjs)](https://github.com/zachjs/sv2v)

@@ -42,6 +42,10 @@ jobs:
           - name: verilator
             deps: autoconf autotools-dev bison flex help2man libfl-dev libelf-dev liblz4-dev z3
             make_jobs_max: 4
+          - name: verilator-synth
+            deps: autoconf autotools-dev bison flex help2man libfl-dev libelf-dev
+            submodules: third_party/abc
+            make_jobs_max: 4
           - name: yosys
             deps: bison clang tcl-dev flex libfl-dev pkg-config libreadline-dev
           - name: yosys-synlig
