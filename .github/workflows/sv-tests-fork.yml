@@ -1,0 +1,156 @@
+# CI for forks of sv-tests on GitHub-hosted runners.
+#
+# sv-tests-ci.yml runs on CHIPS Alliance's self-hosted gcp-custom-runners,
+# which a fork does not have, so on a fork its jobs would wait for a runner
+# forever.  This workflow follows the same steps (same ubuntu:jammy image,
+# same build and run loop) for a small matrix of tools on ubuntu-latest,
+# writes the pass counts to the job summary and keeps the report and logs
+# as artifacts.  It does not deploy anything.
+name: sv-tests-fork
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sv-tests-fork-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  Run:
+    if: github.repository != 'chipsalliance/sv-tests'
+    strategy:
+      fail-fast: false
+      matrix:
+        tool:
+          - name: verilator-synth
+            deps: autoconf autotools-dev bison flex help2man libfl-dev libelf-dev
+            submodules: third_party/abc
+            make_jobs_max: 4
+          - name: verilator
+            deps: autoconf autotools-dev bison flex help2man libfl-dev libelf-dev liblz4-dev z3
+            make_jobs_max: 4
+          - name: yosys
+            deps: bison clang tcl-dev flex libfl-dev pkg-config libreadline-dev
+    name: ${{ matrix.tool.name }}
+    runs-on: ubuntu-latest
+    container: ubuntu:jammy-20221130
+    timeout-minutes: 330
+    env:
+      RUNNERS_FILTER: ${{ matrix.tool.runners_filter }}
+      CCACHE_DIR: ${{ github.workspace }}/.cache/
+      # those generators can use a lot of RAM/cpu and starve other tests
+      # tests from those generators are run without "-j" flag
+      BIG_GENERATORS: "fusesoc black-parrot"
+      DEBIAN_FRONTEND: "noninteractive"
+    steps:
+      - name: Install git and python
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates python3 python3-pip wget file curl
+          update-alternatives --install /usr/bin/python python /usr/bin/python3 1
+          update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+          git config --global --add safe.directory '*'
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install common dependencies
+        run: |
+          pip install --use-pep517 --upgrade setuptools
+          pip install --use-pep517 -r conf/requirements.txt
+      - name: Install VeeR dependencies
+        run: |
+          apt-get install -y -qq cpanminus
+          cpanm Bit::Vector JSON
+      - name: Install ccache
+        run: |
+          apt-get install -y -qq ccache
+      - name: Install tool-specific dependencies
+        if: ${{ matrix.tool.deps }}
+        run: |
+          apt-get install -y -qq ${{ matrix.tool.deps }}
+      - name: Checkout the tool submodule
+        run: |
+          git config --global url.https://github.com/.insteadOf git://github.com/
+          git config --global url."https://github.com/verilator/verilator".insteadOf http://git.veripool.org/git/verilator
+          REPOSITORY_NAME=${{ matrix.tool.name }}
+          if [[ ! -z "${{ matrix.tool.repo }}" ]]; then
+            REPOSITORY_NAME=${{ matrix.tool.repo }}
+          fi
+          git submodule update --init --depth 1 third_party/tools/${REPOSITORY_NAME}
+          if [[ ! -z "${{ matrix.tool.submodules }}" ]]; then
+            pushd third_party/tools/${REPOSITORY_NAME}
+            git submodule update --init --recursive --depth 1 ${{ matrix.tool.submodules }}
+            popd
+          fi
+          # yosys tool contains tests, is a dependency of other tools
+          git submodule update --init --recursive --depth 1 third_party/tools/yosys
+          # icarus contains tests
+          git submodule update --init --depth 1 third_party/tools/icarus
+      - name: Setup cache
+        uses: actions/cache@v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          path: ${{ github.workspace }}/.cache/
+          key: fork_cache_${{ matrix.tool.name }}_${{ github.sha }}
+          restore-keys: fork_cache_${{ matrix.tool.name }}_
+      - name: Build
+        run: |
+          export PATH="/usr/lib/ccache:$PATH"
+          make ${{ matrix.tool.name }} -j$(nproc)
+          ccache -s || true
+      - name: Check
+        run: |
+          make info
+      - name: Checkout third party tests and cores
+        run: |
+          git submodule update --init --recursive --depth 1 third_party/tests
+          git submodule update --init --recursive --depth 1 third_party/cores
+      - name: Run
+        run: |
+          BIG_GENERATORS_EXPR=$(echo $BIG_GENERATORS | sed 's/ /\\|/g')
+          export STABLE_GENERATORS=$(make list-generators | tr ' ' '\n' | grep -v "${BIG_GENERATORS_EXPR}")
+          export UNSTABLE_GENERATORS=$(make list-generators | tr ' ' '\n' | grep "${BIG_GENERATORS_EXPR}")
+          export JOBS=${{ matrix.tool.make_jobs_max }}
+          if [[ "${JOBS}x" == "x" ]]; then export JOBS=$(nproc); fi
+          for gen in ${STABLE_GENERATORS}; do echo "==GEN stable $gen -j $JOBS" ; make generate-$gen -j${JOBS}; make -j ${JOBS}; done
+          for gen in ${UNSTABLE_GENERATORS}; do echo "==GEN unstable $gen" ; make generate-$gen; make; done
+      - name: Summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import collections, csv, os
+          path = 'out/report/report.csv'
+          total = collections.Counter()
+          passed = collections.Counter()
+          if os.path.exists(path):
+              with open(path, newline='') as f:
+                  for row in csv.DictReader(f):
+                      total[row['Tool']] += 1
+                      if row['Pass'] == 'True':
+                          passed[row['Tool']] += 1
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as s:
+              s.write('### ${{ matrix.tool.name }}\n\n')
+              if not total:
+                  s.write('no report.csv\n')
+              s.write('| Tool | Passed | Total |\n|---|---:|---:|\n')
+              for tool in sorted(total):
+                  s.write(f'| {tool} | {passed[tool]} | {total[tool]} |\n')
+          PY
+      - name: Pack results
+        if: always()
+        run: |
+          mkdir -p out/report out/logs
+          [ -f out/report/report.csv ] && mv out/report/report.csv out/report/${{ matrix.tool.name }}_report.csv || true
+          tar -cf out_${{ matrix.tool.name }}.tar ./out/report/ ./out/logs/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report_${{ matrix.tool.name }}
+          path: out_${{ matrix.tool.name }}.tar

@@ -11,6 +11,7 @@ on:
 
 jobs:
   Run:
+    if: github.repository == 'chipsalliance/sv-tests'
     strategy:
       fail-fast: false
       matrix:
@@ -211,6 +212,7 @@ jobs:
             **/plot_*.svg
 
   Summary:
+    if: github.repository == 'chipsalliance/sv-tests'
     name: Summary
     runs-on: [self-hosted, Linux, X64, gcp-custom-runners]
     container: ubuntu:jammy-20221130
