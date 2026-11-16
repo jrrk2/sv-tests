@@ -77,8 +77,9 @@ class Verilator_synth(BaseRunner):
                 ' || exit $?\n')
             if mode == 'elaboration':
                 # a synthesis run must actually produce a netlist
-                f.write(f'test -s {netlist} || '
-                        f'{{ echo "no netlist emitted" >&2; exit 1; }}\n')
+                f.write(
+                    f'test -s {netlist} || '
+                    f'{{ echo "no netlist emitted" >&2; exit 1; }}\n')
                 f.write(f'grep -c "^module" {netlist}\n')
                 # logic the backend could not build is recorded only as
                 # netlist comments; surface it in the log
@@ -87,8 +88,9 @@ class Verilator_synth(BaseRunner):
                 # pass.  Dropped initial/final blocks, $display and similar
                 # testbench statements are expected of synthesis.
                 lossy = '// WARNING: (unsupported|unsynthesizable|force/release)'
-                f.write(f"if grep -qE '{lossy}' {netlist}; then "
-                        'echo "netlist is missing logic" >&2; exit 1; fi\n')
+                f.write(
+                    f"if grep -qE '{lossy}' {netlist}; then "
+                    'echo "netlist is missing logic" >&2; exit 1; fi\n')
 
         self.cmd = ['sh', 'scr.sh']
 
